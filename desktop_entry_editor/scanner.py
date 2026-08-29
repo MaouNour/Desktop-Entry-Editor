@@ -13,13 +13,15 @@ No GTK dependency, so it can be unit tested / reused headlessly.
 """
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 from .desktop_entry import DesktopEntry, MAIN_CATEGORIES
 
 APPLICATIONS = "applications"
+_CACHE_VERSION = 2
 
 
 @dataclass
@@ -88,13 +90,82 @@ def _iter_desktop_files(base_dir: str):
             yield desktop_id, full
 
 
-def scan_all() -> list[DesktopFileInfo]:
+def _cache_dir() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(base, "desktop-entry-editor")
+
+
+def _cache_path() -> str:
+    return os.path.join(_cache_dir(), "scan-cache.json")
+
+
+def _info_to_cache_dict(info: DesktopFileInfo, mtime: float, size: int) -> dict:
+    d = asdict(info)
+    d["mtime"] = mtime
+    d["size"] = size
+    return d
+
+
+def _dict_to_info(d: dict) -> DesktopFileInfo:
+    return DesktopFileInfo(
+        path=d["path"], desktop_id=d["desktop_id"], source=d.get("source", "System"),
+        writable=d.get("writable", True), name=d.get("name") or d["desktop_id"],
+        generic_name=d.get("generic_name", ""), comment=d.get("comment", ""),
+        icon=d.get("icon", ""), categories=list(d.get("categories") or []),
+        entry_type=d.get("entry_type", "Application"), nodisplay=d.get("nodisplay", False),
+        hidden=d.get("hidden", False), exec_cmd=d.get("exec_cmd", ""), error=d.get("error"),
+    )
+
+
+def _read_cache() -> dict:
+    try:
+        with open(_cache_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if data.get("version") != _CACHE_VERSION:
+        return {}
+    return data.get("entries", {})
+
+
+def _write_cache(entries: dict) -> None:
+    # Caching is a pure optimization: never let a write failure (e.g. a
+    # read-only home directory) break scanning itself.
+    try:
+        os.makedirs(_cache_dir(), exist_ok=True)
+        tmp = _cache_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"version": _CACHE_VERSION, "entries": entries}, f)
+        os.replace(tmp, _cache_path())
+    except OSError:
+        pass
+
+
+def load_cached_infos() -> list[DesktopFileInfo]:
+    """Return whatever was cached from the last scan_all() call, instantly
+    and without touching every desktop file on disk. Meant to paint the
+    Browser immediately on launch while a fresh scan runs in the
+    background — makes repeat launches feel instant instead of waiting
+    on a few hundred file parses every time."""
+    entries = _read_cache()
+    infos = [_dict_to_info(d) for d in entries.values()]
+    infos.sort(key=lambda i: (i.name or i.desktop_id).lower())
+    return infos
+
+
+def scan_all(use_cache: bool = True) -> list[DesktopFileInfo]:
     """Scan every known applications directory and return one
     DesktopFileInfo per unique desktop-file id, already shadow-resolved
-    and sorted by display name."""
-    results: list[DesktopFileInfo] = []
+    and sorted by display name.
+
+    Directory walking + stat()ing every candidate file is cheap; actually
+    parsing a .desktop file is the expensive part. So with use_cache=True
+    (the default) a file is only re-parsed if its mtime/size changed
+    since the last scan — everything else is served straight from the
+    on-disk cache, which makes repeat scans close to instant."""
     seen_ids: set[str] = set()
     seen_real_dirs: set[str] = set()
+    candidates: list[tuple[str, str, str]] = []  # (desktop_id, path, source)
 
     for label, dirpath in search_locations():
         if not os.path.isdir(dirpath):
@@ -108,7 +179,34 @@ def scan_all() -> list[DesktopFileInfo]:
             if desktop_id in seen_ids:
                 continue
             seen_ids.add(desktop_id)
-            results.append(_load_info(desktop_id, path, label))
+            candidates.append((desktop_id, path, label))
+
+    old_cache = _read_cache() if use_cache else {}
+    results: list[DesktopFileInfo] = []
+    new_cache: dict = {}
+
+    for desktop_id, path, source in candidates:
+        try:
+            st = os.stat(path)
+            mtime, size = st.st_mtime, st.st_size
+        except OSError:
+            continue
+
+        cached = old_cache.get(desktop_id)
+        if (use_cache and cached and cached.get("path") == path
+                and cached.get("mtime") == mtime and cached.get("size") == size):
+            info = _dict_to_info(cached)
+            # Permissions can change without the file's content changing,
+            # so re-check that cheaply rather than trusting the cache.
+            info.writable = os.access(path, os.W_OK)
+        else:
+            info = _load_info(desktop_id, path, source)
+
+        results.append(info)
+        new_cache[desktop_id] = _info_to_cache_dict(info, mtime, size)
+
+    if use_cache:
+        _write_cache(new_cache)
 
     results.sort(key=lambda i: (i.name or i.desktop_id).lower())
     return results

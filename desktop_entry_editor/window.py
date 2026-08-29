@@ -53,7 +53,10 @@ class MainWindow(Adw.ApplicationWindow):
         if path:
             self.load_path(path)
         else:
-            self._refresh_all()
+            try:
+                self._refresh_all()
+            except Exception as e:  # noqa: BLE001
+                self._toast(f"Could not initialize editor: {e}")
             self._update_title()
 
     @property
@@ -606,7 +609,11 @@ class MainWindow(Adw.ApplicationWindow):
         new_entry.path = self.entry.path
         self.entry = new_entry
         self._mark_dirty()
-        self._refresh_all()
+        try:
+            self._refresh_all()
+        except Exception as e:  # noqa: BLE001
+            self._toast(f"Applied with some issues: {e}")
+            return
         self._toast("Source applied")
 
     # ------------------------------------------------------------------
@@ -747,7 +754,10 @@ class MainWindow(Adw.ApplicationWindow):
             return
         self._path = path
         self._dirty = False
-        self._refresh_all()
+        try:
+            self._refresh_all()
+        except Exception as e:  # noqa: BLE001 - a single odd field must never crash the window
+            self._toast(f"Opened with some issues: {e}")
         self._update_title()
 
     def _on_new(self):

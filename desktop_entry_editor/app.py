@@ -85,7 +85,30 @@ class DesktopEntryEditorApp(Adw.Application):
         return win
 
 
+def _install_crash_guard(app: "DesktopEntryEditorApp") -> None:
+    """PyGObject normally prints a traceback and re-raises out of
+    whatever callback triggered it, which tears down the whole process
+    even for a fully recoverable error (e.g. one odd desktop file).
+    Replace that with: log it, and if a window is open, tell the user
+    via a toast — but keep the app running."""
+    import sys
+    import traceback
+
+    def hook(exc_type, exc_value, exc_tb):
+        traceback.print_exception(exc_type, exc_value, exc_tb)
+        try:
+            win = app.get_active_window()
+            overlay = getattr(win, "toast_overlay", None)
+            if overlay is not None:
+                overlay.add_toast(Adw.Toast(title=f"Unexpected error: {exc_value}", timeout=5))
+        except Exception:  # noqa: BLE001 - the crash guard itself must never crash
+            pass
+
+    sys.excepthook = hook
+
+
 def main(argv=None):
     app = DesktopEntryEditorApp()
+    _install_crash_guard(app)
     import sys
     return app.run(argv if argv is not None else sys.argv)

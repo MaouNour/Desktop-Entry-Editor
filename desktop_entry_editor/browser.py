@@ -7,7 +7,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gio, GLib, GObject
 
-from .scanner import scan_all, category_counts, user_applications_dir, DesktopFileInfo
+from .scanner import scan_all, category_counts, user_applications_dir, load_cached_infos, DesktopFileInfo
 
 CAT_ALL = "__all__"
 CAT_UNCATEGORIZED = "__uncategorized__"
@@ -48,7 +48,7 @@ class _EntryRow(Adw.ActionRow):
         title = GLib.markup_escape_text(info.name or info.desktop_id)
         if info.error:
             self.set_title(title)
-            self.set_subtitle(f"Could not parse: {info.error}")
+            self.set_subtitle(GLib.markup_escape_text(f"Could not parse: {info.error}"))
             self.add_css_class("error")
         else:
             self.set_title(title)
@@ -99,6 +99,18 @@ class BrowserWindow(Adw.ApplicationWindow):
         self.toast_overlay = Adw.ToastOverlay()
         self._build_ui()
         self.set_content(self.toast_overlay)
+
+        # Paint instantly from whatever was cached last run, then refresh
+        # for real in the background — avoids staring at an empty list
+        # every time the app opens.
+        cached = load_cached_infos()
+        if cached:
+            self._infos = cached
+            self._rebuild_sidebar()
+            self._rebuild_entry_list()
+            n = len(cached)
+            self.window_title.set_subtitle(f"{n} entr{'y' if n == 1 else 'ies'} (refreshing…)")
+
         self.refresh()
 
     # ------------------------------------------------------------------
@@ -196,20 +208,30 @@ class BrowserWindow(Adw.ApplicationWindow):
     # Scanning
     # ------------------------------------------------------------------
     def refresh(self):
-        self.window_title.set_subtitle("Scanning…")
+        if not self._infos:
+            self.window_title.set_subtitle("Scanning…")
 
         def worker():
-            infos = scan_all()
+            try:
+                infos = scan_all()
+            except Exception as e:  # noqa: BLE001 - a scan failure must never crash the app
+                print(f"desktop-entry-editor: scan failed: {e}")
+                infos = None
             GLib.idle_add(self._on_scan_done, infos)
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_scan_done(self, infos):
-        self._infos = infos
-        self._rebuild_sidebar()
-        self._rebuild_entry_list()
-        n = len(infos)
-        self.window_title.set_subtitle(f"{n} entr{'y' if n == 1 else 'ies'} found")
+        try:
+            if infos is not None:
+                self._infos = infos
+                self._rebuild_sidebar()
+                self._rebuild_entry_list()
+            n = len(self._infos)
+            self.window_title.set_subtitle(f"{n} entr{'y' if n == 1 else 'ies'} found")
+        except Exception as e:  # noqa: BLE001 - never let a rendering bug kill the app
+            print(f"desktop-entry-editor: failed to display scan results: {e}")
+            self.window_title.set_subtitle("Error loading entries")
         return False  # GLib.idle_add: don't repeat
 
     # ------------------------------------------------------------------
@@ -257,7 +279,10 @@ class BrowserWindow(Adw.ApplicationWindow):
         while (row := self.entry_list.get_row_at_index(0)) is not None:
             self.entry_list.remove(row)
         for info in self._infos:
-            self.entry_list.append(_EntryRow(info))
+            try:
+                self.entry_list.append(_EntryRow(info))
+            except Exception as e:  # noqa: BLE001 - one bad entry must never blank the list
+                print(f"desktop-entry-editor: skipping unrenderable entry {info.path!r}: {e}")
         self.entry_list.invalidate_filter()
         self._update_empty_state()
 
