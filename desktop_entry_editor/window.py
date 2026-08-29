@@ -5,7 +5,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gio, GLib, GObject
+from gi.repository import Gtk, Adw, Gio, GLib
 
 from .desktop_entry import (
     DesktopEntry, DesktopEntryError, MAIN_GROUP,
@@ -62,8 +62,15 @@ class MainWindow(Adw.ApplicationWindow):
         toolbar_view = Adw.ToolbarView()
 
         header = Adw.HeaderBar()
-        self.switcher_title = Adw.ViewSwitcherTitle(title="Desktop Entry Editor")
-        header.set_title_widget(self.switcher_title)
+        # STRICT keeps the title widget mathematically centered in the
+        # header bar even though the start side (New/Open) and end side
+        # (Save/Save As/Run) have a different number of buttons. With the
+        # default LOOSE policy the title just sits centered *between* the
+        # two button groups, which visibly drifts off-center whenever
+        # those groups are different widths.
+        header.set_centering_policy(Adw.CenteringPolicy.STRICT)
+        self.window_title = Adw.WindowTitle(title="Desktop Entry Editor")
+        header.set_title_widget(self.window_title)
 
         new_btn = Gtk.Button(icon_name="document-new-symbolic", tooltip_text="New (Ctrl+N)")
         new_btn.connect("clicked", lambda *_: self._on_new())
@@ -90,13 +97,18 @@ class MainWindow(Adw.ApplicationWindow):
         toolbar_view.add_top_bar(header)
 
         self.stack = Adw.ViewStack()
-        self.switcher_title.set_stack(self.stack)
         self.switcher_bar = Adw.ViewSwitcherBar()
         self.switcher_bar.set_stack(self.stack)
-        self.switcher_title.bind_property(
-            "title-visible", self.switcher_bar, "reveal",
-            GObject.BindingFlags.SYNC_CREATE,
-        )
+        # Always keep the tab bar visible and pinned to the bottom instead
+        # of letting it swap places with the header bar's title. That
+        # swap (Adw.ViewSwitcherTitle's normal adaptive behaviour) is what
+        # caused the "header disappears / tab bar jumps to the top" glitch
+        # when maximizing or fullscreening: past a certain width libadwaita
+        # replaces the header title with an inline copy of the switcher,
+        # which briefly overlaps/relayouts badly with the bottom bar
+        # during the resize. Pinning it here keeps the layout identical
+        # (and predictable) in every window state.
+        self.switcher_bar.set_reveal(True)
 
         toolbar_view.set_content(self.stack)
         toolbar_view.add_bottom_bar(self.switcher_bar)
@@ -836,6 +848,8 @@ class MainWindow(Adw.ApplicationWindow):
         name = self.entry.main.get("Name") or "Untitled"
         marker = "•  " if self._dirty else ""
         self.set_title(f"{marker}{name} — Desktop Entry Editor")
+        self.window_title.set_title(f"{marker}Desktop Entry Editor")
+        self.window_title.set_subtitle(self._path or name)
 
     def _toast(self, message: str):
         self.toast_overlay.add_toast(Adw.Toast(title=message, timeout=3))
