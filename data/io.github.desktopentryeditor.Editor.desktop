@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Desktop Entry Editor
+GenericName=Desktop File Editor
+Comment=Create and edit .desktop application launcher files
+Icon=io.github.desktopentryeditor.Editor
+Exec=desktop-entry-editor %f
+TryExec=desktop-entry-editor
+Terminal=false
+StartupNotify=true
+StartupWMClass=io.github.desktopentryeditor.Editor
+Categories=Utility;System;GTK;
+Keywords=desktop;launcher;shortcut;menu;entry;xdg;
+MimeType=application/x-desktop;
+Actions=NewEntry;
+
+[Desktop Action NewEntry]
+Name=New Desktop Entry
+Exec=desktop-entry-editor

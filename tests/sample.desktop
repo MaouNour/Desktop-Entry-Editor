@@ -1,0 +1,33 @@
+# This is a sample desktop file
+# used for testing
+
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Test Editor
+Name[fr]=Éditeur de test
+GenericName=Text Editor
+GenericName[fr]=Éditeur de texte
+Comment=A test application with a semi;colon and a backslash \\
+Icon=accessories-text-editor
+# terminal apps need this
+Terminal=false
+Exec=test-editor %F
+TryExec=test-editor
+Path=/opt/test-editor
+Categories=Utility;TextEditor;
+Keywords=text;edit;write;
+Keywords[fr]=texte;éditer;
+MimeType=text/plain;text/x-python;
+StartupNotify=true
+StartupWMClass=TestEditor
+Actions=NewWindow;OpenSettings;
+
+[Desktop Action NewWindow]
+Name=New Window
+Icon=window-new
+Exec=test-editor --new-window
+
+[Desktop Action OpenSettings]
+Name=Preferences
+Exec=test-editor --settings
