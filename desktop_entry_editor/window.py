@@ -482,8 +482,10 @@ class MainWindow(Adw.ApplicationWindow):
             name_row.set_text(group.get("Name"))
 
             def on_name_changed(row, group=group, expander=expander):
-                group.set("Name", row.get_text())
                 expander.set_title(row.get_text() or "(unnamed)")
+                if self._loading:
+                    return
+                group.set("Name", row.get_text())
                 self._mark_dirty()
             name_row.connect("changed", on_name_changed)
             expander.add_row(name_row)
@@ -492,6 +494,8 @@ class MainWindow(Adw.ApplicationWindow):
             icon_row.set_value(group.get("Icon"))
 
             def on_icon_changed(_row, value, group=group):
+                if self._loading:
+                    return
                 if value:
                     group.set("Icon", value)
                 else:
@@ -504,6 +508,8 @@ class MainWindow(Adw.ApplicationWindow):
             exec_row.set_text(group.get("Exec"))
 
             def on_exec_changed(row, group=group):
+                if self._loading:
+                    return
                 group.set("Exec", row.get_text())
                 self._mark_dirty()
             exec_row.connect("changed", on_exec_changed)
@@ -853,7 +859,13 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_close_request(self, *_a):
         if self._dirty:
-            self._confirm_discard(self.close)
+            def discard_and_close():
+                # Clear the dirty flag first: close() re-emits
+                # "close-request", and without this the handler would
+                # just show the confirmation dialog again forever.
+                self._dirty = False
+                self.close()
+            self._confirm_discard(discard_and_close)
             return True
         return False
 
