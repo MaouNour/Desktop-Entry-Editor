@@ -14,6 +14,7 @@ from .desktop_entry import (
 )
 from .icon_row import IconEntryRow
 from .localization_dialog import LocalizationDialog
+from .scanner import user_applications_dir
 
 EXEC_FIELD_CODE_HELP = (
     "%f  a single file path\n"
@@ -55,6 +56,10 @@ class MainWindow(Adw.ApplicationWindow):
             self._refresh_all()
             self._update_title()
 
+    @property
+    def current_path(self) -> str | None:
+        return self._path
+
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
@@ -71,6 +76,10 @@ class MainWindow(Adw.ApplicationWindow):
         header.set_centering_policy(Adw.CenteringPolicy.STRICT)
         self.window_title = Adw.WindowTitle(title="Desktop Entry Editor")
         header.set_title_widget(self.window_title)
+
+        browse_btn = Gtk.Button(icon_name="view-grid-symbolic", tooltip_text="Browse All Entries (Ctrl+B)")
+        browse_btn.connect("clicked", lambda *_: self._on_browse_all())
+        header.pack_start(browse_btn)
 
         new_btn = Gtk.Button(icon_name="document-new-symbolic", tooltip_text="New (Ctrl+N)")
         new_btn.connect("clicked", lambda *_: self._on_new())
@@ -89,6 +98,11 @@ class MainWindow(Adw.ApplicationWindow):
         save_as_btn = Gtk.Button(icon_name="document-save-as-symbolic", tooltip_text="Save As (Ctrl+Shift+S)")
         save_as_btn.connect("clicked", lambda *_: self._on_save_as())
         header.pack_end(save_as_btn)
+
+        install_btn = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Install to Applications Menu\n(saves straight to ~/.local/share/applications)")
+        install_btn.connect("clicked", lambda *_: self._on_install())
+        header.pack_end(install_btn)
+        self.install_button = install_btn
 
         run_btn = Gtk.Button(icon_name="media-playback-start-symbolic", tooltip_text="Test run Exec= command")
         run_btn.connect("clicked", lambda *_: self._on_test_run())
@@ -128,6 +142,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._install_action("win.open", lambda *_: self._on_open(), ["<primary>o"])
         self._install_action("win.save", lambda *_: self._on_save(), ["<primary>s"])
         self._install_action("win.save-as", lambda *_: self._on_save_as(), ["<primary><shift>s"])
+        self._install_action("win.browse-all", lambda *_: self._on_browse_all(), ["<primary>b"])
 
     def _install_action(self, name, callback, accels):
         action_name = name.split(".", 1)[1]
@@ -808,16 +823,96 @@ class MainWindow(Adw.ApplicationWindow):
 
         dialog.save(self, None, on_done)
 
-    def _save_to(self, path: str):
+    def _save_to(self, path: str, install_toast: bool = False):
         try:
             self.entry.save(path)
+        except PermissionError:
+            self._offer_save_copy(path)
+            return
         except Exception as e:  # noqa: BLE001
             self._toast(f"Could not save: {e}")
             return
         self._path = path
         self._dirty = False
         self._update_title()
-        self._toast(f"Saved {os.path.basename(path)}")
+        if install_toast:
+            self._toast(f"Installed as {os.path.basename(path)} — it will appear in your Applications menu")
+            self._maybe_update_desktop_database(os.path.dirname(path))
+        else:
+            self._toast(f"Saved {os.path.basename(path)}")
+
+    def _offer_save_copy(self, attempted_path: str):
+        """Saving in place failed (typically a system-owned file the
+        user has no write permission for). Offer the standard Linux
+        workaround: save an editable copy into the user's own
+        applications directory, which overrides the system one."""
+        suggested = os.path.join(user_applications_dir(), os.path.basename(attempted_path))
+        dialog = Adw.AlertDialog(
+            heading="Can't Save Here",
+            body=(f"You don't have permission to write to \u201c{attempted_path}\u201d.\n\n"
+                  "Save a copy to your user Applications folder instead? "
+                  "It will override this entry just for you."),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("copy", "Save Copy")
+        dialog.set_response_appearance("copy", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("copy")
+
+        def on_response(_d, response):
+            if response == "copy":
+                os.makedirs(os.path.dirname(suggested), exist_ok=True)
+                self._save_to(suggested, install_toast=True)
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
+
+    def _maybe_update_desktop_database(self, apps_dir: str):
+        import subprocess
+        try:
+            subprocess.Popen(
+                ["update-desktop-database", apps_dir],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            pass
+
+    def _on_install(self):
+        """Quick-save straight into ~/.local/share/applications, deriving
+        a filename from Name= — no file chooser needed."""
+        target_dir = user_applications_dir()
+        name = self.entry.main.get("Name") or "application"
+        safe = "".join(c for c in name if c.isalnum() or c in " -_").strip()
+        filename = (safe.replace(" ", "") or "application") + ".desktop"
+        target = os.path.join(target_dir, filename)
+
+        def do_install():
+            os.makedirs(target_dir, exist_ok=True)
+            self._save_to(target, install_toast=True)
+
+        same_file = self._path and os.path.abspath(self._path) == os.path.abspath(target)
+        if os.path.exists(target) and not same_file:
+            dialog = Adw.AlertDialog(
+                heading="Replace Existing Entry?",
+                body=f"\u201c{filename}\u201d already exists in your Applications menu.",
+            )
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("replace", "Replace")
+            dialog.set_response_appearance("replace", Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response("cancel")
+
+            def on_response(_d, response):
+                if response == "replace":
+                    do_install()
+
+            dialog.connect("response", on_response)
+            dialog.present(self)
+        else:
+            do_install()
+
+    def _on_browse_all(self):
+        app = self.get_application()
+        if app is not None:
+            app.show_browser()
 
     def _on_test_run(self):
         import shlex

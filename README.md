@@ -6,6 +6,25 @@ A native GTK4 + libadwaita application for creating and editing Linux
 
 ## Features
 
+- **Browse every entry on your system.** Launching the app with no file
+  argument opens a Browser window that scans `~/.local/share/applications`,
+  every directory in `XDG_DATA_DIRS` (e.g. `/usr/share/applications`),
+  and the common Flatpak/Snap export locations — then lists them grouped
+  by category (with search) so you don't have to know a file's path to
+  edit it. User copies correctly shadow/override system entries with the
+  same id, matching how the desktop shell itself resolves them.
+- **Install new entries with one click.** The header bar's "+" (Install)
+  button saves the current entry straight to
+  `~/.local/share/applications/<Name>.desktop` — no file-picker required —
+  so a brand-new launcher shows up in your Applications menu immediately.
+- **Old-style single-file editing is untouched.** `main.py FILE.desktop`,
+  double-click-to-open, Save/Save As to any path you choose, and the raw
+  Source tab all work exactly as before — the Browser is purely additive.
+- **Graceful handling of read-only system entries.** If you open a system
+  file (e.g. under `/usr/share/applications`) and hit Save, and you don't
+  have permission to overwrite it in place, the app offers to save your
+  edited copy into your user Applications folder instead — the standard
+  way of overriding a system launcher without root.
 - **All standard keys**: Type, Name, GenericName, Comment, Icon, Version,
   NoDisplay, Hidden, Exec, TryExec, Path, Terminal, StartupNotify,
   StartupWMClass, DBusActivatable, SingleMainWindow, PrefersNonDefaultGPU,
@@ -66,9 +85,16 @@ To uninstall: `./uninstall.sh`
 ## Usage
 
 ```bash
-desktop-entry-editor                       # start with a blank new entry
-desktop-entry-editor mytool.desktop        # open an existing file
+desktop-entry-editor                       # open the Browser (all entries, by category)
+desktop-entry-editor mytool.desktop        # open an existing file directly in the editor
 ```
+
+In the Browser: pick a category on the left (or search), click any entry
+to open it in the editor, or click "+" in the header to start a blank one.
+In the editor: the grid icon in the header takes you back to the Browser
+at any time; Save/Save As behave as always, and the new "+" (Install)
+button is the fast path for saving a new or edited entry into your
+personal Applications menu.
 
 Or just double-click any `.desktop` file and pick **Desktop Entry Editor**
 from "Open With". To make it the default handler for `.desktop` files:
@@ -89,8 +115,10 @@ python3 main.py [optional/path/to/file.desktop]
 main.py                          entry point
 desktop_entry_editor/
   desktop_entry.py               spec-compliant parser/writer (no GTK dependency)
-  app.py                         Adw.Application (handles activation + file-open)
-  window.py                      main window, all editing pages
+  scanner.py                     finds/indexes every .desktop file on the system (no GTK dependency)
+  app.py                         Adw.Application (browser + editor window management, file-open)
+  browser.py                     Browser window: category sidebar, search, entry list
+  window.py                      editor window, all editing pages
   icon_row.py                    Icon= picker widget with preview
   localization_dialog.py         per-locale editing dialog
 data/
