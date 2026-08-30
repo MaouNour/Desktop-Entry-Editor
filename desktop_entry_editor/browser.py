@@ -97,8 +97,7 @@ class BrowserWindow(Adw.ApplicationWindow):
         self._current_category = CAT_ALL
         self._search_text = ""
         self._entry_list_build_token = None
-        self._last_activated_path = None
-        self._last_activated_at = 0.0
+        self._last_activation: tuple[str | None, float] = (None, 0.0)
 
         self.toast_overlay = Adw.ToastOverlay()
         self._build_ui()
@@ -360,25 +359,26 @@ class BrowserWindow(Adw.ApplicationWindow):
             yield row
             i += 1
 
-    # Minimum gap between two activations of the *same* row that we'll
-    # actually act on. A real double-click is ~0-400ms apart, so this is
-    # generous for legitimate input -- but it's a hard backstop against
-    # any runaway feedback loop between this handler and window
-    # presentation (whatever triggers it), since a suppressed activation
-    # does no work at all: no open_editor_for_path call, no present(),
-    # nothing that could feed the loop further.
-    _ACTIVATION_DEBOUNCE_SECONDS = 0.4
-
     def _on_row_activated(self, _list, row):
         from .debug_log import log
+
+        # Defends against an input-event storm (seen on some Wayland +
+        # touchpad/libinput combinations, where a single physical tap
+        # can be reported as a rapid burst of duplicate click events):
+        # a real user cannot generate more than a handful of activations
+        # per second on the same row, so collapse anything faster than
+        # that into a single action instead of repeatedly hammering
+        # win.present() — which on Wayland involves a compositor round
+        # trip each time, and doing that in a tight loop is a real way
+        # to desync/crash a Wayland client, independent of anything else
+        # our code does with the result.
         now = time.monotonic()
-        path = row.info.path
-        if (path == self._last_activated_path
-                and now - self._last_activated_at < self._ACTIVATION_DEBOUNCE_SECONDS):
-            log(f"row-activated: {row.info.desktop_id!r} suppressed (debounced)")
+        last_id, last_time = self._last_activation
+        if last_id == row.info.desktop_id and (now - last_time) < 0.4:
+            log(f"row-activated: suppressing duplicate/storm activation of {row.info.desktop_id!r} "
+                f"({now - last_time:.3f}s since last)")
             return
-        self._last_activated_path = path
-        self._last_activated_at = now
+        self._last_activation = (row.info.desktop_id, now)
 
         log(f"row-activated: {row.info.desktop_id!r} path={row.info.path!r}")
         self._app.open_editor_for_path(row.info.path)
