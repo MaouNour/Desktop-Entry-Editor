@@ -39,6 +39,8 @@ def _globe_button(tooltip="Edit translations"):
 
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, app, path: str | None = None):
+        from .debug_log import log
+        log(f"MainWindow.__init__: start path={path!r}")
         super().__init__(application=app)
         self.set_default_size(880, 720)
         self.entry: DesktopEntry = DesktopEntry.new_application()
@@ -47,19 +49,24 @@ class MainWindow(Adw.ApplicationWindow):
         self._path: str | None = None
 
         self.toast_overlay = Adw.ToastOverlay()
+        log("MainWindow.__init__: calling _build_ui()")
         self._build_ui()
+        log("MainWindow.__init__: _build_ui() returned")
         self.set_content(self.toast_overlay)
 
         self.connect("close-request", self._on_close_request)
 
         if path:
+            log("MainWindow.__init__: calling load_path()")
             self.load_path(path)
+            log("MainWindow.__init__: load_path() returned")
         else:
             try:
                 self._refresh_all()
             except Exception as e:  # noqa: BLE001
                 self._toast(f"Could not initialize editor: {e}")
             self._update_title()
+        log("MainWindow.__init__: done")
 
     @property
     def current_path(self) -> str | None:
@@ -622,8 +629,10 @@ class MainWindow(Adw.ApplicationWindow):
     # Loading values from self.entry into the widgets
     # ------------------------------------------------------------------
     def _refresh_all(self):
+        from .debug_log import log
         self._loading = True
         try:
+            log("_refresh_all: basic fields")
             m = self.entry.main
             type_val = m.get("Type", default="Application")
             try:
@@ -635,7 +644,9 @@ class MainWindow(Adw.ApplicationWindow):
             self.name_row.set_text(m.get("Name"))
             self.generic_name_row.set_text(m.get("GenericName"))
             self.comment_row.set_text(m.get("Comment"))
+            log(f"_refresh_all: setting icon preview, Icon={m.get('Icon')!r}")
             self.icon_row.set_value(m.get("Icon"))
+            log("_refresh_all: icon preview set")
             self.version_row.set_text(m.get("Version"))
             self.no_display_row.set_active(m.get_bool("NoDisplay"))
             self.hidden_row.set_active(m.get_bool("Hidden"))
@@ -650,6 +661,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.single_main_window_row.set_active(m.get_bool("SingleMainWindow"))
             self.prefers_gpu_row.set_active(m.get_bool("PrefersNonDefaultGPU"))
             self.wmclass_row.set_text(m.get("StartupWMClass"))
+            log("_refresh_all: execution fields set")
 
             categories = m.get_list("Categories")
             known = set(self._category_checks.keys())
@@ -657,10 +669,12 @@ class MainWindow(Adw.ApplicationWindow):
                 cb.set_active(cat in categories)
             custom = [c for c in categories if c not in known]
             self.custom_categories_row.set_text(_format_semicolon_text(custom))
+            log("_refresh_all: categories set")
 
             self.keywords_row.set_text(_format_semicolon_text(m.get_list("Keywords")))
             self.mimetype_row.set_text(_format_semicolon_text(m.get_list("MimeType")))
             self.implements_row.set_text(_format_semicolon_text(m.get_list("Implements")))
+            log("_refresh_all: keywords/mime/implements set")
 
             only_show = set(m.get_list("OnlyShowIn"))
             not_show = set(m.get_list("NotShowIn"))
@@ -668,10 +682,15 @@ class MainWindow(Adw.ApplicationWindow):
                 cb.set_active(de in only_show)
             for de, cb in self._not_show_checks.items():
                 cb.set_active(de in not_show)
+            log("_refresh_all: visibility flags set")
 
+            log("_refresh_all: calling _refresh_actions()")
             self._refresh_actions()
+            log("_refresh_all: calling _refresh_source()")
             self._refresh_source()
+            log("_refresh_all: calling _update_visible_pages()")
             self._update_visible_pages()
+            log("_refresh_all: all done")
         finally:
             self._loading = False
 
@@ -749,18 +768,26 @@ class MainWindow(Adw.ApplicationWindow):
     # File operations
     # ------------------------------------------------------------------
     def load_path(self, path: str):
+        from .debug_log import log
+        log(f"load_path: reading file {path!r}")
         try:
             self.entry = DesktopEntry.from_file(path)
         except Exception as e:  # noqa: BLE001
+            log(f"load_path: DesktopEntry.from_file raised: {e!r}")
             self._toast(f"Could not open {path}: {e}")
             return
+        log("load_path: file parsed OK")
         self._path = path
         self._dirty = False
         try:
+            log("load_path: calling _refresh_all()")
             self._refresh_all()
+            log("load_path: _refresh_all() returned")
         except Exception as e:  # noqa: BLE001 - a single odd field must never crash the window
+            log(f"load_path: _refresh_all() raised: {e!r}")
             self._toast(f"Opened with some issues: {e}")
         self._update_title()
+        log("load_path: done")
 
     def _on_new(self):
         def do_new():

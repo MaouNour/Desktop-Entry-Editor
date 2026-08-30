@@ -358,7 +358,10 @@ class BrowserWindow(Adw.ApplicationWindow):
             i += 1
 
     def _on_row_activated(self, _list, row):
+        from .debug_log import log
+        log(f"row-activated: {row.info.desktop_id!r} path={row.info.path!r}")
         self._app.open_editor_for_path(row.info.path)
+        log(f"row-activated: returned from open_editor_for_path for {row.info.desktop_id!r}")
 
     def _on_open_file(self):
         dialog = Gtk.FileDialog(title="Open Desktop Entry")

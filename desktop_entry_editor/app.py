@@ -72,16 +72,23 @@ class DesktopEntryEditorApp(Adw.Application):
         """Open `path` for editing, reusing an already-open editor
         window for that same file if there is one. path=None opens a
         fresh blank entry (always a new window)."""
+        from .debug_log import log
+        log(f"open_editor_for_path: start path={path!r}")
         if path:
             for win in self._editors:
                 if win.current_path == path:
+                    log("open_editor_for_path: reusing existing editor window")
                     win.present()
                     return win
 
+        log("open_editor_for_path: constructing MainWindow(...)")
         win = MainWindow(self, path=path)
+        log("open_editor_for_path: MainWindow(...) constructor returned")
         self._editors.append(win)
         win.connect("destroy", lambda *_a, w=win: self._editors.remove(w) if w in self._editors else None)
+        log("open_editor_for_path: calling win.present()")
         win.present()
+        log("open_editor_for_path: win.present() returned")
         return win
 
 
