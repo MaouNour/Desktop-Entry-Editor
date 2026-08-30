@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 
 import gi
 
@@ -96,6 +97,8 @@ class BrowserWindow(Adw.ApplicationWindow):
         self._current_category = CAT_ALL
         self._search_text = ""
         self._entry_list_build_token = None
+        self._last_activated_path = None
+        self._last_activated_at = 0.0
 
         self.toast_overlay = Adw.ToastOverlay()
         self._build_ui()
@@ -357,8 +360,26 @@ class BrowserWindow(Adw.ApplicationWindow):
             yield row
             i += 1
 
+    # Minimum gap between two activations of the *same* row that we'll
+    # actually act on. A real double-click is ~0-400ms apart, so this is
+    # generous for legitimate input -- but it's a hard backstop against
+    # any runaway feedback loop between this handler and window
+    # presentation (whatever triggers it), since a suppressed activation
+    # does no work at all: no open_editor_for_path call, no present(),
+    # nothing that could feed the loop further.
+    _ACTIVATION_DEBOUNCE_SECONDS = 0.4
+
     def _on_row_activated(self, _list, row):
         from .debug_log import log
+        now = time.monotonic()
+        path = row.info.path
+        if (path == self._last_activated_path
+                and now - self._last_activated_at < self._ACTIVATION_DEBOUNCE_SECONDS):
+            log(f"row-activated: {row.info.desktop_id!r} suppressed (debounced)")
+            return
+        self._last_activated_path = path
+        self._last_activated_at = now
+
         log(f"row-activated: {row.info.desktop_id!r} path={row.info.path!r}")
         self._app.open_editor_for_path(row.info.path)
         log(f"row-activated: returned from open_editor_for_path for {row.info.desktop_id!r}")

@@ -77,8 +77,19 @@ class DesktopEntryEditorApp(Adw.Application):
         if path:
             for win in self._editors:
                 if win.current_path == path:
-                    log("open_editor_for_path: reusing existing editor window")
-                    win.present()
+                    if win.is_active():
+                        # Already the focused window -- presenting again is a
+                        # no-op at best. On some Wayland compositors it can
+                        # trigger a focus hand-back to whatever sent this
+                        # activation (e.g. the browser row that opened it),
+                        # which re-fires that activation, which calls
+                        # present() again -- an unbounded feedback loop that
+                        # pins a CPU core and eventually gets the process
+                        # SIGKILLed. Skip the redundant present() entirely.
+                        log("open_editor_for_path: reusing existing editor window (already active, skipping present())")
+                    else:
+                        log("open_editor_for_path: reusing existing editor window")
+                        win.present()
                     return win
 
         log("open_editor_for_path: constructing MainWindow(...)")
