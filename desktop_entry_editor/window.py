@@ -1,4 +1,6 @@
 import os
+import shlex
+import subprocess
 from collections import OrderedDict
 
 import gi
@@ -877,7 +879,6 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.present(self)
 
     def _maybe_update_desktop_database(self, apps_dir: str):
-        import subprocess
         try:
             subprocess.Popen(
                 ["update-desktop-database", apps_dir],
@@ -925,22 +926,72 @@ class MainWindow(Adw.ApplicationWindow):
             app.show_browser()
 
     def _on_test_run(self):
-        import shlex
-        import subprocess
+        """Resolve the Exec= command and let the user explicitly confirm
+        before anything is actually launched. This used to call
+        subprocess.Popen() immediately and unconditionally — for an entry
+        whose Exec is itself a wrapper script (e.g. many real-world
+        third-party .desktop files: `bash -c '...several commands... &
+        exec realapp "$@"'`), that silently launched the *real* target
+        application (with real side effects — background jobs, log
+        files, a second instance of an app that expects to be a
+        singleton) with no warning. Showing the resolved command first
+        and requiring an explicit click fixes that regardless of what
+        the target command itself does or how it behaves once launched.
+        """
         exec_line = self.entry.main.get("Exec")
         if not exec_line:
             self._toast("No Exec command set")
             return
+
         cleaned = exec_line
         for code in ("%f", "%F", "%u", "%U", "%i", "%c", "%k"):
             cleaned = cleaned.replace(code, "")
         cleaned = cleaned.replace("%%", "%").strip()
+
         try:
             args = shlex.split(cleaned)
-            subprocess.Popen(args)
-            self._toast(f"Launched: {cleaned}")
-        except Exception as e:  # noqa: BLE001
-            self._toast(f"Failed to launch: {e}")
+        except ValueError as e:
+            # Unbalanced quotes etc. — a real possibility for hand-edited
+            # or malformed entries; report it instead of letting the
+            # exception escape.
+            self._toast(f"Can't parse Exec: {e}")
+            return
+        if not args:
+            self._toast("Exec resolves to an empty command")
+            return
+
+        dialog = Adw.AlertDialog(
+            heading="Run This Command?",
+            body=("This will actually launch the process below, exactly "
+                  "as a desktop launcher would — including anything it "
+                  "runs internally (background jobs, other programs it "
+                  "execs, etc). Only do this if you trust it.\n\n"
+                  f"{cleaned}"),
+            body_use_markup=False,
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("run", "Run")
+        dialog.set_response_appearance("run", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def on_response(_d, response):
+            if response != "run":
+                return
+            try:
+                subprocess.Popen(
+                    args,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,  # detach from our process group
+                )
+                self._toast(f"Launched: {cleaned}")
+            except Exception as e:  # noqa: BLE001 - report, never propagate
+                self._toast(f"Failed to launch: {e}")
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
 
     # ------------------------------------------------------------------
     # Misc

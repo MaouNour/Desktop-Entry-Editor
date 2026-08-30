@@ -76,18 +76,62 @@ def search_locations() -> list[tuple[str, str]]:
 def _iter_desktop_files(base_dir: str):
     """Yield (desktop_id, full_path) for every .desktop/.directory file
     under base_dir, recursing into subdirectories per the spec (a file
-    at Foo/bar.desktop has id 'Foo-bar.desktop')."""
-    for root, _dirs, files in os.walk(base_dir, followlinks=True):
-        rel_root = os.path.relpath(root, base_dir)
-        for fn in files:
+    at Foo/bar.desktop has id 'Foo-bar.desktop').
+
+    Guards against symlink cycles: os.walk(followlinks=True) does not
+    track visited directories on its own (the stdlib docs warn about
+    this explicitly), so a symlink that loops back on a parent — not
+    uncommon in Flatpak/Snap export trees — makes it recurse until the
+    OS's own symlink-resolution limit kicks in. That's slow (each
+    failed resolution still costs a syscall) and, depending on how deep
+    a real filesystem lets it get before erroring, has been observed to
+    make the C stack of a background thread blow up rather than raise
+    a catchable Python exception. Tracking realpath(dir) and skipping
+    anything already seen makes this a hard guarantee instead of relying
+    on the OS to eventually give up.
+    """
+    seen_real_dirs: set[str] = set()
+    # .desktop trees are 1-2 levels deep in every real layout; this is
+    # only a last-resort backstop in case a loop somehow isn't caught
+    # by the realpath check (e.g. a directory that's re-created with
+    # new content between visits).
+    max_depth = 12
+
+    def walk(dir_path: str, depth: int):
+        if depth > max_depth:
+            return
+        try:
+            real = os.path.realpath(dir_path)
+        except OSError:
+            return
+        if real in seen_real_dirs:
+            return
+        seen_real_dirs.add(real)
+
+        try:
+            entries = list(os.scandir(dir_path))
+        except OSError:
+            return
+
+        rel_root = os.path.relpath(dir_path, base_dir)
+        for entry in entries:
+            try:
+                is_dir = entry.is_dir(follow_symlinks=True)
+            except OSError:
+                continue
+            if is_dir:
+                walk(entry.path, depth + 1)
+                continue
+            fn = entry.name
             if not (fn.endswith(".desktop") or fn.endswith(".directory")):
                 continue
-            full = os.path.join(root, fn)
             if rel_root == ".":
                 desktop_id = fn
             else:
                 desktop_id = rel_root.replace(os.sep, "-") + "-" + fn
-            yield desktop_id, full
+            yield desktop_id, entry.path
+
+    yield from walk(base_dir, 0)
 
 
 def _cache_dir() -> str:

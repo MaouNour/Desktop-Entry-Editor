@@ -95,6 +95,7 @@ class BrowserWindow(Adw.ApplicationWindow):
         self._infos: list[DesktopFileInfo] = []
         self._current_category = CAT_ALL
         self._search_text = ""
+        self._entry_list_build_token = None
 
         self.toast_overlay = Adw.ToastOverlay()
         self._build_ui()
@@ -278,13 +279,39 @@ class BrowserWindow(Adw.ApplicationWindow):
     def _rebuild_entry_list(self):
         while (row := self.entry_list.get_row_at_index(0)) is not None:
             self.entry_list.remove(row)
-        for info in self._infos:
-            try:
-                self.entry_list.append(_EntryRow(info))
-            except Exception as e:  # noqa: BLE001 - one bad entry must never blank the list
-                print(f"desktop-entry-editor: skipping unrenderable entry {info.path!r}: {e}")
-        self.entry_list.invalidate_filter()
-        self._update_empty_state()
+
+        # Building one Adw.ActionRow (with an icon lookup/load each) per
+        # entry synchronously blocks the GTK main loop until every row is
+        # built — with a few hundred installed entries (easy to reach
+        # once Flatpak/Snap exports are included) that's a visible stall
+        # right when the window is supposed to appear. Building in small
+        # batches between main-loop iterations keeps the UI responsive
+        # and paints progressively instead of freezing then popping in.
+        infos = list(self._infos)
+        BATCH = 40
+
+        # Guards against a stale batch runner still adding rows after a
+        # newer refresh() (or category rescan) has replaced self._infos.
+        token = object()
+        self._entry_list_build_token = token
+
+        def build_batch(start=0):
+            if self._entry_list_build_token is not token:
+                return False  # a newer rebuild superseded this one
+            end = min(start + BATCH, len(infos))
+            for info in infos[start:end]:
+                try:
+                    self.entry_list.append(_EntryRow(info))
+                except Exception as e:  # noqa: BLE001 - one bad entry must never blank the list
+                    print(f"desktop-entry-editor: skipping unrenderable entry {info.path!r}: {e}")
+            if end < len(infos):
+                GLib.idle_add(build_batch, end)
+            else:
+                self.entry_list.invalidate_filter()
+                self._update_empty_state()
+            return False
+
+        build_batch()
 
     def _on_search_changed(self, entry):
         self._search_text = entry.get_text().strip().lower()
