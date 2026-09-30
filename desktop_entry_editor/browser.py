@@ -80,7 +80,11 @@ class _EntryRow(Adw.ActionRow):
         suffix_box.append(badge)
 
         self.add_suffix(suffix_box)
-        self.set_activatable_widget(self)
+        # NOTE: do NOT call self.set_activatable_widget(self) here. Making a
+        # row its own "activatable widget" makes Adw.ActionRow.activate()
+        # re-activate itself forever -> infinite recursion -> the process
+        # dies as soon as an entry is clicked. set_activatable(True) above
+        # is all that's needed for the ListBox to emit "row-activated".
 
 
 class BrowserWindow(Adw.ApplicationWindow):
@@ -381,8 +385,16 @@ class BrowserWindow(Adw.ApplicationWindow):
         self._last_activation = (row.info.desktop_id, now)
 
         log(f"row-activated: {row.info.desktop_id!r} path={row.info.path!r}")
-        self._app.open_editor_for_path(row.info.path)
-        log(f"row-activated: returned from open_editor_for_path for {row.info.desktop_id!r}")
+        path = row.info.path
+
+        # Open the editor from an idle callback rather than inside the
+        # row's activation handler, so the click is fully finished
+        # before a new toplevel is built and presented.
+        def open_it():
+            self._app.open_editor_for_path(path)
+            return False
+
+        GLib.idle_add(open_it)
 
     def _on_open_file(self):
         dialog = Gtk.FileDialog(title="Open Desktop Entry")
