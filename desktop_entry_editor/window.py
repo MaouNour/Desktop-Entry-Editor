@@ -409,6 +409,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.mimetype_row = Adw.EntryRow(title="MimeType")
         self.mimetype_row.connect("changed", lambda *_: self._commit_list("MimeType", self.mimetype_row))
         mime_group.add(self.mimetype_row)
+        default_btn = Gtk.Button(label="Set as Default…", valign=Gtk.Align.CENTER,
+                                 tooltip_text="Make this application the default for the types listed above")
+        default_btn.add_css_class("flat")
+        default_btn.connect("clicked", lambda *_: self._on_set_as_default())
+        mime_group.set_header_suffix(default_btn)
         page.add(mime_group)
 
         implements_group = Adw.PreferencesGroup(
@@ -1033,6 +1038,46 @@ class MainWindow(Adw.ApplicationWindow):
         self.set_title(f"{marker}{name} — Desktop Entry Editor")
         self.window_title.set_title(f"{marker}Desktop Entry Editor")
         self.window_title.set_subtitle(self._path or name)
+
+    def _on_set_as_default(self):
+        """Make this saved entry the default app for every MimeType it lists
+        (same effect as choosing it in GNOME Settings or `xdg-mime default`)."""
+        from . import mimeapps as ma  # lazy: only needed for this button
+
+        mimes = [m for m in self.entry.main.get_list("MimeType") if m]
+        if not mimes:
+            self._toast("This entry has no MIME types to set as default")
+            return
+        if self.entry.path is None or self._dirty:
+            self._toast("Save the entry first so the system sees the same MIME types")
+            return
+        app = Gio.DesktopAppInfo.new(os.path.basename(self.entry.path))
+        if app is None:
+            self._toast("The system doesn't know this entry yet. Install it to your "
+                        "Applications folder first")
+            return
+
+        dialog = Adw.AlertDialog(
+            heading="Set as Default?",
+            body=(f"\u201c{ma.app_name(app)}\u201d will open all {len(mimes)} type(s) "
+                  "listed in MimeType, replacing your current choice for each."),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("apply", "Set as Default")
+        dialog.set_response_appearance("apply", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel")
+
+        def on_response(_d, response):
+            if response != "apply":
+                return
+            errors = ma.set_default(app, mimes)
+            if errors:
+                self._toast(f"Could not set {len(errors)} type(s): {errors[0]}")
+            else:
+                self._toast(f"Default for {len(mimes)} type(s) set")
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
 
     def _toast(self, message: str):
         self.toast_overlay.add_toast(Adw.Toast(title=message, timeout=3))

@@ -13,6 +13,21 @@ A native GTK4 + libadwaita application for creating and editing Linux
   by category (with search) so you don't have to know a file's path to
   edit it. User copies correctly shadow/override system entries with the
   same id, matching how the desktop shell itself resolves them.
+- **Default Apps page.** The "Default Apps" tab in the Browser window
+  shows the current default for Web Browser, Mail, Calendar, Maps, Contacts,
+  File Manager, Text Editor, PDF, E-books, Archives, Torrents, Photos, Music and Video,
+  and lets you change each from a drop-down (related types such as
+  http/https/text/html are switched together) or reset it to the system
+  default. Changes go to `~/.config/mimeapps.list`, exactly like GNOME
+  Settings and `xdg-mime`.
+- **Set as Default from the editor.** In the MIME Types section of the editor
+  window, "Set as Default…" makes the saved, installed entry the default app
+  for every type in its `MimeType=` list (after a confirmation).
+- **File Types page (by suffix).** The "File Types" tab lists every suffix
+  the system knows (`.exe`, `.tar.xz`, ...) with the app that opens it.
+  Search by suffix, MIME type or description, tick "Only ones I changed"
+  to review your own overrides, and click a row to pick another app
+  (optionally from *all* installed apps) or reset it.
 - **Install new entries with one click.** The header bar's "+" (Install)
   button saves the current entry straight to
   `~/.local/share/applications/<Name>.desktop` — no file-picker required —
@@ -119,12 +134,16 @@ desktop_entry_editor/
   app.py                         Adw.Application (browser + editor window management, file-open)
   browser.py                     Browser window: category sidebar, search, entry list
   window.py                      editor window, all editing pages
+  mimeapps.py                    default-app / MIME / suffix backend (Gio only, no GTK)
+  default_apps.py                "Default Apps" page
+  file_types.py                  "File Types" (by suffix) page + app chooser dialog
   icon_row.py                    Icon= picker widget with preview
   localization_dialog.py         per-locale editing dialog
 data/
   *.desktop, *.svg               the app's own launcher + icon, for installing
 install.sh / uninstall.sh
 tests/sample.desktop             a sample file exercising most spec features
+tests/test_mimeapps.py           headless tests (12): python3 -m unittest tests.test_mimeapps -v
 ```
 
 ## Notes / limitations

@@ -8,6 +8,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gio, GLib, GObject
 
+from .default_apps import DefaultAppsPage
+from .file_types import FileTypesPage
 from .scanner import scan_all, category_counts, user_applications_dir, load_cached_infos, DesktopFileInfo
 
 CAT_ALL = "__all__"
@@ -146,6 +148,15 @@ class BrowserWindow(Adw.ApplicationWindow):
 
         toolbar_view.add_top_bar(header)
 
+        # Page switcher: Entries | Default Apps | File Types. Sits in its own bar under
+        # the header so the entry-count subtitle above stays visible.
+        self.view_stack = Adw.ViewStack()
+        switcher = Adw.ViewSwitcher(stack=self.view_stack, policy=Adw.ViewSwitcherPolicy.WIDE,
+                                    halign=Gtk.Align.CENTER)
+        switcher_bar = Gtk.Box(halign=Gtk.Align.CENTER, margin_top=4, margin_bottom=4)
+        switcher_bar.append(switcher)
+        toolbar_view.add_top_bar(switcher_bar)
+
         search_bar = Gtk.SearchBar()
         self.search_entry = Gtk.SearchEntry(placeholder_text="Search name, comment, exec, path…")
         search_bar.set_child(self.search_entry)
@@ -196,13 +207,43 @@ class BrowserWindow(Adw.ApplicationWindow):
         content_page = Adw.NavigationPage(title="Entries", child=self.content_stack)
         split.set_content(content_page)
 
-        toolbar_view.set_content(split)
+        self.view_stack.add_titled_with_icon(split, "entries", "Entries", "view-list-symbolic")
+
+        self.default_apps_page = DefaultAppsPage(on_toast=self.toast)
+        self.view_stack.add_titled_with_icon(
+            self.default_apps_page, "defaults", "Default Apps", "emblem-default-symbolic")
+
+        self.file_types_page = FileTypesPage(on_toast=self.toast)
+        self.view_stack.add_titled_with_icon(
+            self.file_types_page, "filetypes", "File Types", "text-x-generic-symbolic")
+
+        # The header buttons and the type-to-search shortcut only make
+        # sense for the Entries page.
+        self._search_bar = search_bar
+        self._search_btn = search_btn
+        self._entries_only = [refresh_btn, search_btn, new_btn, open_btn]
+        self.view_stack.connect("notify::visible-child-name", self._on_page_changed)
+
+        toolbar_view.set_content(self.view_stack)
         self.toast_overlay.set_child(toolbar_view)
 
         # shortcuts
         self._install_action("win.rescan", lambda *_: self.refresh(), ["<primary>r"])
         self._install_action("win.new-entry", lambda *_: self._app.open_editor_for_path(None), ["<primary>n"])
-        self._install_action("win.find", lambda *_: search_btn.set_active(True), ["<primary>f"])
+        self._install_action("win.find", lambda *_: search_btn.get_visible() and search_btn.set_active(True), ["<primary>f"])
+
+    def _on_page_changed(self, *_a):
+        on_entries = self.view_stack.get_visible_child_name() == "entries"
+        for w in self._entries_only:
+            w.set_visible(on_entries)
+        if not on_entries:
+            self._search_btn.set_active(False)
+        self._search_bar.set_key_capture_widget(self if on_entries else None)
+        page = self.view_stack.get_visible_child_name()
+        if page == "defaults":
+            self.default_apps_page.refresh()
+        elif page == "filetypes":
+            self.file_types_page.refresh()
 
     def _install_action(self, name, callback, accels):
         action_name = name.split(".", 1)[1]
